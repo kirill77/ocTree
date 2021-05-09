@@ -2,10 +2,55 @@
 
 #include "basics/bboxes.h"
 
+template <class T, NvU32 MAX_DEPTH>
+struct OcTreeBoxStack
+{
+    void init(BBox3<T> rootBox)
+    {
+        m_curDepth = 0;
+        m_curBox = rootBox;
+        m_uBox[0] = m_uBox[1] = m_uBox[2] = 0;
+    }
+    void push(NvU32 uChild)
+    {
+        for (NvU32 uDim = 0; uDim < 3; ++uDim)
+        {
+            NvU32 dimBit = ((uChild >> uDim) & 1);
+            m_uBox[uDim] = (m_uBox[uDim] << 1) | dimBit;
+            m_boundsStack[m_curDepth][uDim] = m_curBox[dimBit ^ 1][uDim];
+            m_curBox[dimBit ^ 1][uDim] = (m_curBox[0][uDim] + m_curBox[1][uDim]) / 2;
+        }
+        ++m_curDepth;
+    }
+    NvU32 pop() // returns child index (0 to 7)
+    {
+        --m_curDepth;
+        NvU32 uChild = 0;
+        for (NvU32 uDim = 2; uDim < 3; --uDim)
+        {
+            NvU32 dimBit = m_uBox[uDim] & 1;
+            m_uBox[uDim] >>= 1;
+            m_curBox[dimBit ^ 1][uDim] = m_boundsStack[m_curDepth][uDim];
+            uChild = (uChild << 1) | dimBit;
+        }
+        return uChild;
+    }
+    const BBox3<T>& getCurBox() const { return m_curBox; }
+    NvU32 getCurDepth() const { return m_curDepth; }
+
+protected:
+    NvU32 m_curDepth = 0;
+private:
+    rtvector<T, 3> m_boundsStack[MAX_DEPTH];
+    BBox3<T> m_curBox;
+    NvU32 m_uBox[3]; // starts with 0,0,0, *= 2 when we descend, += 1 when we shift
+};
+
 template <class Access> // implements all access to outside world required by this class
 struct OcTreeNode
 {
     typedef OcTreeNode<Access> NodeType;
+    typedef typename Access::FLOAT_TYPE FLOAT_TYPE;
 
     OcTreeNode() : m_uFirstChild(~0U) { }
     ~OcTreeNode() { }
@@ -16,54 +61,55 @@ struct OcTreeNode
     {
         m_uFirstPoint = firstPoint;
         m_uEndPoint = endPoint;
+        nvAssert(isLeaf());
     }
+    NvU32 getFirstPoint() const { nvAssert(isLeaf()); return m_uFirstPoint; }
+    NvU32 getEndPoint() const { nvAssert(isLeaf()); return m_uEndPoint; }
+    NvU32 getNPoints() const { nvAssert(isLeaf()); return m_uEndPoint - m_uFirstPoint; }
+    NvU32 getFirstChild() const { nvAssert(!isLeaf()); return m_uFirstChild; }
 
-    bool split(const float3& vCenter, Access &access)
+    bool split(const rtvector<FLOAT_TYPE, 3>& vCenter, Access &access)
     {
         if (!isLeaf() || m_uFirstPoint == m_uEndPoint) return false;
 
-        NvU32 uFirstChild = access.getNNodes();
-        access.resizeNodes(uFirstChild + 8);
+        NvU32 splitZ  = loosePointsSort(m_uFirstPoint, m_uEndPoint, vCenter[2], 2, access);
+        NvU32 splitY0 = loosePointsSort(m_uFirstPoint, splitZ, vCenter[1], 1, access);
+        NvU32 splitY1 = loosePointsSort(splitZ, m_uEndPoint, vCenter[1], 1, access);
+        NvU32 splitX0 = loosePointsSort(m_uFirstPoint, splitY0, vCenter[0], 0, access);
+        NvU32 splitX1 = loosePointsSort(splitY0, splitZ, vCenter[0], 0, access);
+        NvU32 splitX2 = loosePointsSort(splitZ, splitY1, vCenter[0], 0, access);
+        NvU32 splitX3 = loosePointsSort(splitY1, m_uEndPoint, vCenter[0], 0, access);
 
-        NvU32 splitZ  = access.looseSort(m_uFirstPoint, m_uEndPoint, vCenter[2], 2);
-        NvU32 splitY0 = access.looseSort(m_uFirstPoint, splitZ, vCenter[1], 1);
-        NvU32 splitY1 = access.looseSort(splitZ, m_uEndPoint, vCenter[1], 1);
-        NvU32 splitX0 = access.looseSort(m_uFirstPoint, splitY0, vCenter[0], 0);
-        NvU32 splitX1 = access.looseSort(splitY0, splitZ, vCenter[0], 0);
-        NvU32 splitX2 = access.looseSort(splitZ, splitY1, vCenter[0], 0);
-        NvU32 splitX3 = access.looseSort(splitY1, m_uEndPoint, vCenter[0], 0);
-
-        access.node(uFirstChild + 0).initLeaf(m_uFirstPoint, splitX0);
-        access.node(uFirstChild + 1).initLeaf(splitX0, splitY0);
-        access.node(uFirstChild + 2).initLeaf(splitY0, splitX1);
-        access.node(uFirstChild + 2).initLeaf(splitX1, splitZ);
-        access.node(uFirstChild + 3).initLeaf(splitZ, splitX2);
-        access.node(uFirstChild + 4).initLeaf(splitX2, splitY1);
-        access.node(uFirstChild + 5).initLeaf(splitY1, splitX3);
-        access.node(uFirstChild + 6).initLeaf(splitX3, m_uEndPoint);
-
+        NvU32 uFirstPoint = m_uFirstPoint;
+        NvU32 uEndPoint = m_uEndPoint;
+        NvU32 uFirstChild = m_uFirstChild = access.getNNodes();
         m_uEndPoint = ~0U;
+        access.resizeNodes(m_uFirstChild + 8);
+
+        access.accessNode(uFirstChild + 0).initLeaf(uFirstPoint, splitX0);
+        access.accessNode(uFirstChild + 1).initLeaf(splitX0, splitY0);
+        access.accessNode(uFirstChild + 2).initLeaf(splitY0, splitX1);
+        access.accessNode(uFirstChild + 3).initLeaf(splitX1, splitZ);
+        access.accessNode(uFirstChild + 4).initLeaf(splitZ, splitX2);
+        access.accessNode(uFirstChild + 5).initLeaf(splitX2, splitY1);
+        access.accessNode(uFirstChild + 6).initLeaf(splitY1, splitX3);
+        access.accessNode(uFirstChild + 7).initLeaf(splitX3, uEndPoint);
 
         return true;
     }
 
-    struct BoxIterator
+    struct BoxIterator : OcTreeBoxStack<float, 32>
     {
         BoxIterator(NvU32 uRootNode, const BBox3f& rootBox, Access& access);
         BoxIterator(const BoxIterator& other);
         void descend(NvU32 childIndex);
         NvU32 ascend(); // returns index of the child where we've been
         NvU32 getCurNodeIndex() const { return m_nodesStack[m_curDepth]; }
-        NvU32 getCurDepth() const { return m_curDepth; }
-        const BBox3f& getCurBox() const { return m_curBox; }
         bool isAccuracyMatch(const BoxIterator& other);
+
     private:
         Access& m_access;
-        NvU32 m_uBox[3]; // starts with 0,0,0, *= 2 when we descend, += 1 when we shift
-        float3 m_boundsStack[32];
-        BBox3f m_curBox;
         NvU32 m_nodesStack[32];
-        NvU32 m_curDepth;
     };
 
     // assuming each point has scalar charge and there is a force acting between each pair of charges, compute cumulative force acting on each point.
@@ -125,16 +171,16 @@ struct OcTreeNode
     }
 
 private:
-#if 0
-    // returns index of first point for which points[u][uDim] >= vCenter[uDim]
-    static NvU32 looseSort(NvU32 uBegin, NvU32 uEnd, const float3& vCenter, NvU32 uDim)
+    // returns index of first point for which points[u][uDim] >= fSplit
+    static NvU32 loosePointsSort(NvU32 uBegin, NvU32 uEnd, FLOAT_TYPE fSplit, NvU32 uDim, Access &access)
     {
-        for (float fSplit = vCenter[uDim]; ; ++uBegin)
+        for ( ; ; ++uBegin)
         {
             nvAssert(uBegin <= uEnd);
             if (uBegin == uEnd)
                 return uEnd;
-            if (points[uBegin][uDim] < fSplit)
+            FLOAT_TYPE f1 = access.getPoint(uBegin)[uDim];
+            if (f1 < fSplit)
                 continue;
             // search for element with which we can swap
             for (--uEnd; ; --uEnd)
@@ -142,13 +188,13 @@ private:
                 nvAssert(uBegin <= uEnd);
                 if (uBegin == uEnd)
                     return uEnd;
-                if (points[uEnd][uDim] < fSplit)
+                FLOAT_TYPE f2 = access.getPoint(uEnd)[uDim];
+                if (f2 < fSplit)
                     break;
             }
-            points.swap(uBegin, uEnd);
+            access.swapPoints(uBegin, uEnd);
         }
     }
-#endif
     union
     {
         NvU32 m_uFirstChild; // index into NodeAllocator
