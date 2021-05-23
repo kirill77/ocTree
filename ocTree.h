@@ -61,6 +61,30 @@ private:
     NvU32 m_nodesStack[32];
 };
 
+template <class T>
+struct MyRay
+{
+    bool intersects(const BBox3<T>& bbox) const
+    {
+        for (NvU32 uDim = 0; uDim < 3; ++uDim)
+        {
+            if (m_vDir[uDim] <= 0)
+            {
+                if (m_vOrg[uDim] < bbox.m_vMin[uDim] || bbox.m_vMax[uDim] - m_vOrg[uDim] < m_fMaxDist * m_vDir[uDim])
+                    return false;
+            }
+            else
+            {
+                if (m_vOrg[uDim] > bbox.m_vMax[uDim] || bbox.m_vMin[uDim] - m_vOrg[uDim] > m_fMaxDist * m_vDir[uDim])
+                    return false;
+            }
+        }
+        return true;
+    }
+    rtvector<T, 3> m_vOrg, m_vDir;
+    T m_fMaxDist;
+};
+
 template <class Access> // implements all access to outside world required by this class
 struct OcTreeNode
 {
@@ -106,34 +130,29 @@ struct OcTreeNode
 
         BoxIterator(NvU32 rootIndex, BBox3<T> rootBox, Access& access) : BASE(rootIndex, rootBox), m_access(access) { }
         BoxIterator(const BoxIterator& other) : BASE(other), m_access(other.m_access) { }
-        void push(NvU32 uChild)
-        {
-            BASE::push(uChild, getNode().getFirstChild() + uChild);
-        }
         bool next()
         {
             if (!getNode().isLeaf())
             {
-                push(0);
+                BASE::push(0, getNode().getFirstChild());
                 return true;
             }
             return nextNoDescendent();
         }
         bool nextNoDescendent()
         {
-            NvU32 uChild;
-            for (; ; )
+            for ( ; ; )
             {
                 if (BASE::getCurDepth() == 0)
                     return false;
-                uChild = BASE::pop();
+                NvU32 uChild = BASE::pop();
                 if (uChild == 7)
                 {
                     if (BASE::getCurDepth() == 0)
                         return false;
                     continue;
                 }
-                push(uChild + 1);
+                BASE::push(uChild + 1, getNode().getFirstChild() + uChild + 1);
                 return true;
             }
             return false;
@@ -144,39 +163,54 @@ struct OcTreeNode
         Access& m_access;
     };
 
+    // hierarchical ray tracing
+    static void trace(NvU32 rootIndex, const BBox3<T>& rootBox, Access& access, MyRay<T>& ray)
+    {
+        BoxIterator boxIt(rootIndex, rootBox, access);
+        for ( ; ; )
+        {
+            if (!ray.intersects(boxIt.getCurBox()))
+            {
+                if (!boxIt.nextNoDescendent())
+                    return;
+                continue;
+            }
+            if (!boxIt.next())
+                return;
+        }
+    }
     // hierarhical computation of force - tries to avoid N^2 complexity by lumping large groups of far-away particles together
     static void computeForces(NvU32 rootIndex, const BBox3<T> &rootBox, Access& access)
     {
-        bool bIt1NextSucceeded = true;
-        for (BoxIterator dstIt(rootIndex, rootBox, access); bIt1NextSucceeded; bIt1NextSucceeded = dstIt.next())
+        BoxIterator dstIt(rootIndex, rootBox, access);
+        do
         {
             const OcTreeNode& dstNode = dstIt.getNode();
-            if (!dstNode.getNPoints())
-            {
-                nvAssert(dstNode.isLeaf())
-                continue;
-            }
             if (dstNode.isLeaf())
             {
-                bool bIt2NextSuceeded = true;
-                for (BoxIterator srcIt(rootIndex, rootBox, access); bIt2NextSuceeded; )
+                if (!dstNode.getNPoints())
+                {
+                    continue;
+                }
+                for (BoxIterator srcIt(rootIndex, rootBox, access); ; )
                 {
                     const OcTreeNode& srcNode = srcIt.getNode();
                     if (!srcNode.getNPoints())
                     {
                         nvAssert(srcNode.isLeaf());
-                        bIt2NextSuceeded = srcIt.next();
+                        if (!srcIt.next()) break;
                         continue;
                     }
                     if (access.addNode2LeafContribution(dstIt.getCurNodeIndex(), dstIt, srcIt.getCurNodeIndex(), srcIt))
                     {
-                        bIt2NextSuceeded = srcIt.nextNoDescendent();
+                        if (!srcIt.nextNoDescendent()) break;
                         continue;
                     }
-                    bIt2NextSuceeded = srcIt.next();
+                    if (!srcIt.next()) break;
                 }
             }
-        }
+            nvAssert(dstNode.getNPoints()); // internal node must have points in it - otherwise why did we split it
+        } while (dstIt.next());
     }
 
 private:
