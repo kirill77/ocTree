@@ -82,31 +82,20 @@ struct OcTreeNode
     NvU32 getNPoints() const { return m_uEndPoint - m_uFirstPoint; }
     NvU32 getFirstChild() const { nvAssert(!isLeaf()); return m_uFirstChild; }
 
-    bool split(const rtvector<T, 3>& vCenter, Access &access)
+    bool split(const OcBoxStack<T>& stack, Access &access)
     {
         nvAssert(isLeaf() && getNPoints());
 
-        NvU32 splitZ  = loosePointsSort(m_uFirstPoint, m_uEndPoint, vCenter[2], 2, access);
-        NvU32 splitY0 = loosePointsSort(m_uFirstPoint, splitZ, vCenter[1], 1, access);
-        NvU32 splitY1 = loosePointsSort(splitZ, m_uEndPoint, vCenter[1], 1, access);
-        NvU32 splitX0 = loosePointsSort(m_uFirstPoint, splitY0, vCenter[0], 0, access);
-        NvU32 splitX1 = loosePointsSort(splitY0, splitZ, vCenter[0], 0, access);
-        NvU32 splitX2 = loosePointsSort(splitZ, splitY1, vCenter[0], 0, access);
-        NvU32 splitX3 = loosePointsSort(splitY1, m_uEndPoint, vCenter[0], 0, access);
-
-        NvU32 uFirstPoint = m_uFirstPoint;
-        NvU32 uEndPoint = m_uEndPoint;
+        NvU32 firstPoints[8] = { 0 };
+        NvU32 endPoints[8] = { 0 };
+        access.createChildrenPointIndices(stack, firstPoints, endPoints);
         NvU32 uFirstChild = m_uFirstChild = access.getNNodes();
         access.resizeNodes(m_uFirstChild + 8);
 
-        access.accessNode(uFirstChild + 0).initLeaf(uFirstPoint, splitX0);
-        access.accessNode(uFirstChild + 1).initLeaf(splitX0, splitY0);
-        access.accessNode(uFirstChild + 2).initLeaf(splitY0, splitX1);
-        access.accessNode(uFirstChild + 3).initLeaf(splitX1, splitZ);
-        access.accessNode(uFirstChild + 4).initLeaf(splitZ, splitX2);
-        access.accessNode(uFirstChild + 5).initLeaf(splitX2, splitY1);
-        access.accessNode(uFirstChild + 6).initLeaf(splitY1, splitX3);
-        access.accessNode(uFirstChild + 7).initLeaf(splitX3, uEndPoint);
+        for (NvU32 u = 0; u < 8; ++u)
+        {
+            access.accessNode(uFirstChild + u).initLeaf(firstPoints[u], endPoints[u]);
+        }
 
         return true;
     }
@@ -191,30 +180,6 @@ struct OcTreeNode
     }
 
 private:
-    // returns index of first point for which points[u][uDim] >= fSplit
-    static NvU32 loosePointsSort(NvU32 uBegin, NvU32 uEnd, T fSplit, NvU32 uDim, Access &access)
-    {
-        for ( ; ; ++uBegin)
-        {
-            nvAssert(uBegin <= uEnd);
-            if (uBegin == uEnd)
-                return uEnd;
-            T f1 = access.getPoint(uBegin)[uDim];
-            if (f1 < fSplit)
-                continue;
-            // search for element with which we can swap
-            for (--uEnd; ; --uEnd)
-            {
-                nvAssert(uBegin <= uEnd);
-                if (uBegin == uEnd)
-                    return uEnd;
-                T f2 = access.getPoint(uEnd)[uDim];
-                if (f2 < fSplit)
-                    break;
-            }
-            access.swapPoints(uBegin, uEnd);
-        }
-    }
     NvU32 m_uFirstChild = ~0U; // = ~0U if it's a leaf
     NvU32 m_uFirstPoint;
     NvU32 m_uEndPoint;
