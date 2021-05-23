@@ -99,6 +99,7 @@ struct OcTreeNode
     {
         m_uFirstPoint = firstPoint;
         m_uEndPoint = endPoint;
+        m_uFirstChild = ~0U;
         nvAssert(isLeaf());
     }
     NvU32 getFirstPoint() const { return m_uFirstPoint; }
