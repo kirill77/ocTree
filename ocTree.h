@@ -111,16 +111,30 @@ struct OcTreeNode
     {
         nvAssert(isLeaf() && getNPoints());
 
-        NvU32 firstPoints[8] = { 0 };
-        NvU32 endPoints[8] = { 0 };
-        access.createChildrenPointIndices(stack, firstPoints, endPoints);
+        const auto& bbox = stack.getCurBox();
+        auto vCenter = bbox.computeCenter();
+        NvU32 uFirstPoint = getFirstPoint();
+        NvU32 uEndPoint = getEndPoint();
+
+        NvU32 splitZ = access.loosePointsSort(uFirstPoint, uEndPoint, vCenter[2], 2);
+        NvU32 splitY0 = access.loosePointsSort(uFirstPoint, splitZ, vCenter[1], 1);
+        NvU32 splitY1 = access.loosePointsSort(splitZ, uEndPoint, vCenter[1], 1);
+        NvU32 splitX0 = access.loosePointsSort(uFirstPoint, splitY0, vCenter[0], 0);
+        NvU32 splitX1 = access.loosePointsSort(splitY0, splitZ, vCenter[0], 0);
+        NvU32 splitX2 = access.loosePointsSort(splitZ, splitY1, vCenter[0], 0);
+        NvU32 splitX3 = access.loosePointsSort(splitY1, uEndPoint, vCenter[0], 0);
+
         NvU32 uFirstChild = m_uFirstChild = access.getNNodes();
         access.resizeNodes(m_uFirstChild + 8);
 
-        for (NvU32 u = 0; u < 8; ++u)
-        {
-            access.accessNode(uFirstChild + u).initLeaf(firstPoints[u], endPoints[u]);
-        }
+        access.accessNode(uFirstChild + 0).initLeaf(uFirstPoint, splitX0);
+        access.accessNode(uFirstChild + 1).initLeaf(splitX0, splitY0);
+        access.accessNode(uFirstChild + 2).initLeaf(splitY0, splitX1);
+        access.accessNode(uFirstChild + 3).initLeaf(splitX1, splitZ);
+        access.accessNode(uFirstChild + 4).initLeaf(splitZ, splitX2);
+        access.accessNode(uFirstChild + 5).initLeaf(splitX2, splitY1);
+        access.accessNode(uFirstChild + 6).initLeaf(splitY1, splitX3);
+        access.accessNode(uFirstChild + 7).initLeaf(splitX3, uEndPoint);
 
         return true;
     }
