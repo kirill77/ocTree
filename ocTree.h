@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include "basics/bboxes.h"
 
 template <class T>
@@ -57,8 +58,8 @@ struct OcBoxStack
 private:
     NvU32 m_curDepth = 0;
     uint3 m_childBits; // remembers which child we went into when doing push()
-    BBox3<T> m_boxStack[32];
-    NvU32 m_nodesStack[32];
+    std::array<BBox3<T>, 32> m_boxStack;
+    std::array<NvU32, 32> m_nodesStack;
 };
 
 template <class T>
@@ -147,9 +148,9 @@ struct OcTreeNode
         BoxIterator(const BoxIterator& other) : BASE(other), m_access(other.m_access) { }
         bool next()
         {
-            if (!getNode().isLeaf())
+            if (!accessCurNode().isLeaf())
             {
-                BASE::push(0, getNode().getFirstChild());
+                BASE::push(0, accessCurNode().getFirstChild());
                 return true;
             }
             return nextNoDescendent();
@@ -167,12 +168,12 @@ struct OcTreeNode
                         return false;
                     continue;
                 }
-                BASE::push(uChild + 1, getNode().getFirstChild() + uChild + 1);
+                BASE::push(uChild + 1, accessCurNode().getFirstChild() + uChild + 1);
                 return true;
             }
             return false;
         }
-        OcTreeNode& getNode() { return m_access.accessNode(BASE::getCurNodeIndex()); }
+        OcTreeNode& accessCurNode() { return m_access.accessNode(BASE::getCurNodeIndex()); }
 
     private:
         Access& m_access;
@@ -194,13 +195,13 @@ struct OcTreeNode
                 return;
         }
     }
-    // hierarhical computation of force - tries to avoid N^2 complexity by lumping large groups of far-away particles together
+    // hierarhical computation of force - tries to avoid N^2 complexity by ignoring far-away particles
     static void computeForces(NvU32 rootIndex, const BBox3<T> &rootBox, Access& access)
     {
         BoxIterator dstIt(rootIndex, rootBox, access);
         do
         {
-            const OcTreeNode& dstNode = dstIt.getNode();
+            const OcTreeNode& dstNode = dstIt.accessCurNode();
             if (dstNode.isLeaf())
             {
                 if (!dstNode.getNPoints())
@@ -209,7 +210,7 @@ struct OcTreeNode
                 }
                 for (BoxIterator srcIt(rootIndex, rootBox, access); ; )
                 {
-                    const OcTreeNode& srcNode = srcIt.getNode();
+                    const OcTreeNode& srcNode = srcIt.accessCurNode();
                     if (!srcNode.getNPoints())
                     {
                         nvAssert(srcNode.isLeaf());
