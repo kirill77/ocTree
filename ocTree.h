@@ -195,38 +195,41 @@ struct OcTreeNode
                 return;
         }
     }
-    // hierarhical computation of force - tries to avoid N^2 complexity by ignoring far-away particles
-    static void computeForces(NvU32 rootIndex, const BBox3<T> &rootBox, Access& access)
+
+    // add node2node interactions.
+    // we try to avoid n^2 complexity by breaking out of the loop early in case all interactions for particular nodes have been fully accounted.
+    static void addNode2NodeInteractions(NvU32 rootIndex, const BBox3<T> &rootBox, Access& access)
     {
-        BoxIterator dstIt(rootIndex, rootBox, access);
+        BoxIterator it1(rootIndex, rootBox, access);
         do
         {
-            const OcTreeNode& dstNode = dstIt.accessCurNode();
-            if (dstNode.isLeaf())
+            const OcTreeNode& node1 = it1.accessCurNode();
+            // in the general case it would be too hard to remember which nodes already interacted with which other nodes
+            // so we use more restrictive case of node1.isLeaf() && node2 >= node1 (comparison goes over traversal order)
+            if (node1.isLeaf())
             {
-                if (!dstNode.getNPoints())
+                if (!access.canHaveInteraction(node1))
                 {
                     continue;
                 }
-                for (BoxIterator srcIt(rootIndex, rootBox, access); ; )
+                for (BoxIterator it2(it1); ; )
                 {
-                    const OcTreeNode& srcNode = srcIt.accessCurNode();
-                    if (!srcNode.getNPoints())
+                    const OcTreeNode& node2 = it2.accessCurNode();
+                    if (!access.canHaveInteraction(node2))
                     {
-                        nvAssert(srcNode.isLeaf());
-                        if (!srcIt.next()) break;
+                        if (!it2.next()) break;
                         continue;
                     }
-                    if (access.addNode2LeafContribution(dstIt.getCurNodeIndex(), dstIt, srcIt.getCurNodeIndex(), srcIt))
+                    if (access.addLeafAndNodeInteraction(it1.getCurNodeIndex(), it1, it2.getCurNodeIndex(), it2))
                     {
-                        if (!srcIt.nextNoDescendent()) break;
+                        if (!it2.nextNoDescendent()) break;
                         continue;
                     }
-                    if (!srcIt.next()) break;
+                    if (!it2.next()) break;
                 }
             }
-            nvAssert(dstNode.getNPoints()); // internal node must have points in it - otherwise why did we split it
-        } while (dstIt.next());
+            nvAssert(access.isOkToBeNotLeaf(node1));
+        } while (it1.next());
     }
 
 private:
