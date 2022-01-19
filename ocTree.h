@@ -95,6 +95,10 @@ struct OcTreeNode
 
     NODE_DATA m_nodeData;
 
+    void initAsParent(NvU32 uFirstChild)
+    {
+        m_uFirstChild = uFirstChild;
+    }
     bool isLeaf() const { return m_uFirstChild == ~0U; }
     void initLeaf(NvU32 firstPoint, NvU32 endPoint)
     {
@@ -107,38 +111,6 @@ struct OcTreeNode
     NvU32 getEndPoint() const { return m_uEndPoint; }
     NvU32 getNPoints() const { return m_uEndPoint - m_uFirstPoint; }
     NvU32 getFirstChild() const { nvAssert(!isLeaf()); return m_uFirstChild; }
-
-    bool split(const OcBoxStack<T>& stack, Access &access)
-    {
-        nvAssert(isLeaf() && getNPoints());
-
-        const auto& bbox = stack.getCurBox();
-        auto vCenter = bbox.computeCenter();
-        NvU32 uFirstPoint = getFirstPoint();
-        NvU32 uEndPoint = getEndPoint();
-
-        NvU32 splitZ = access.loosePointsSort(uFirstPoint, uEndPoint, vCenter[2], 2);
-        NvU32 splitY0 = access.loosePointsSort(uFirstPoint, splitZ, vCenter[1], 1);
-        NvU32 splitY1 = access.loosePointsSort(splitZ, uEndPoint, vCenter[1], 1);
-        NvU32 splitX0 = access.loosePointsSort(uFirstPoint, splitY0, vCenter[0], 0);
-        NvU32 splitX1 = access.loosePointsSort(splitY0, splitZ, vCenter[0], 0);
-        NvU32 splitX2 = access.loosePointsSort(splitZ, splitY1, vCenter[0], 0);
-        NvU32 splitX3 = access.loosePointsSort(splitY1, uEndPoint, vCenter[0], 0);
-
-        NvU32 uFirstChild = m_uFirstChild = access.getNNodes();
-        access.resizeNodes(m_uFirstChild + 8);
-
-        access.accessNode(uFirstChild + 0).initLeaf(uFirstPoint, splitX0);
-        access.accessNode(uFirstChild + 1).initLeaf(splitX0, splitY0);
-        access.accessNode(uFirstChild + 2).initLeaf(splitY0, splitX1);
-        access.accessNode(uFirstChild + 3).initLeaf(splitX1, splitZ);
-        access.accessNode(uFirstChild + 4).initLeaf(splitZ, splitX2);
-        access.accessNode(uFirstChild + 5).initLeaf(splitX2, splitY1);
-        access.accessNode(uFirstChild + 6).initLeaf(splitY1, splitX3);
-        access.accessNode(uFirstChild + 7).initLeaf(splitX3, uEndPoint);
-
-        return true;
-    }
 
     struct BoxIterator : public OcBoxStack<T>
     {
@@ -236,4 +208,50 @@ private:
     NvU32 m_uFirstChild = ~0U; // = ~0U if it's a leaf
     NvU32 m_uFirstPoint;
     NvU32 m_uEndPoint;
+};
+
+template <class Access>
+struct OcTree
+{
+    typedef typename Access::T T;
+
+    OcTree(Access& access) : m_access(access)
+    {
+    }
+    bool split(const OcBoxStack<T>& stack)
+    {
+        auto& node = m_nodes[stack.getCurNodeIndex()];
+        nvAssert(node.isLeaf() && node.getNPoints());
+
+        const auto& bbox = stack.getCurBox();
+        auto vCenter = bbox.computeCenter();
+        NvU32 uFirstPoint = node.getFirstPoint();
+        NvU32 uEndPoint = node.getEndPoint();
+
+        NvU32 splitZ = m_access.loosePointsSort(uFirstPoint, uEndPoint, vCenter[2], 2);
+        NvU32 splitY0 = m_access.loosePointsSort(uFirstPoint, splitZ, vCenter[1], 1);
+        NvU32 splitY1 = m_access.loosePointsSort(splitZ, uEndPoint, vCenter[1], 1);
+        NvU32 splitX0 = m_access.loosePointsSort(uFirstPoint, splitY0, vCenter[0], 0);
+        NvU32 splitX1 = m_access.loosePointsSort(splitY0, splitZ, vCenter[0], 0);
+        NvU32 splitX2 = m_access.loosePointsSort(splitZ, splitY1, vCenter[0], 0);
+        NvU32 splitX3 = m_access.loosePointsSort(splitY1, uEndPoint, vCenter[0], 0);
+
+        NvU32 uFirstChild = (NvU32)m_nodes.size();
+        node.initAsParent(uFirstChild);
+        m_nodes.resize(uFirstChild + 8);
+
+        m_nodes[uFirstChild + 0].initLeaf(uFirstPoint, splitX0);
+        m_nodes[uFirstChild + 1].initLeaf(splitX0, splitY0);
+        m_nodes[uFirstChild + 2].initLeaf(splitY0, splitX1);
+        m_nodes[uFirstChild + 3].initLeaf(splitX1, splitZ);
+        m_nodes[uFirstChild + 4].initLeaf(splitZ, splitX2);
+        m_nodes[uFirstChild + 5].initLeaf(splitX2, splitY1);
+        m_nodes[uFirstChild + 6].initLeaf(splitY1, splitX3);
+        m_nodes[uFirstChild + 7].initLeaf(splitX3, uEndPoint);
+
+        return true;
+    }
+
+    Access& m_access;
+    std::vector<OcTreeNode<Access>> m_nodes;
 };
