@@ -218,6 +218,33 @@ struct OcTree
     OcTree(Access& access) : m_access(access)
     {
     }
+
+    void rebuild(BBox3<T> bbox, NvU32 nPoints)
+    {
+        // create root oc-tree node
+        m_nodes.resize(1);
+        m_nodes[0].initLeaf(0, nPoints);
+        if (m_points.size() != nPoints)
+        {
+            m_points.resize(nPoints);
+            for (NvU32 u = 0; u < nPoints; ++u)
+            {
+                m_points[u] = u;
+            }
+        }
+
+        // initialize stack
+        OcBoxStack<T> curStack(0, bbox);
+        // split oc-tree recursively to get small number of points per leaf
+        splitRecursive(curStack);
+    }
+
+    Access& m_access;
+    std::vector<OcTreeNode<Access>> m_nodes;
+
+private:
+    std::vector<NvU32> m_points; // index into points of m_access
+
     bool split(const OcBoxStack<T>& stack)
     {
         auto& node = m_nodes[stack.getCurNodeIndex()];
@@ -228,13 +255,13 @@ struct OcTree
         NvU32 uFirstPoint = node.getFirstPoint();
         NvU32 uEndPoint = node.getEndPoint();
 
-        NvU32 splitZ = m_access.loosePointsSort(uFirstPoint, uEndPoint, vCenter[2], 2);
-        NvU32 splitY0 = m_access.loosePointsSort(uFirstPoint, splitZ, vCenter[1], 1);
-        NvU32 splitY1 = m_access.loosePointsSort(splitZ, uEndPoint, vCenter[1], 1);
-        NvU32 splitX0 = m_access.loosePointsSort(uFirstPoint, splitY0, vCenter[0], 0);
-        NvU32 splitX1 = m_access.loosePointsSort(splitY0, splitZ, vCenter[0], 0);
-        NvU32 splitX2 = m_access.loosePointsSort(splitZ, splitY1, vCenter[0], 0);
-        NvU32 splitX3 = m_access.loosePointsSort(splitY1, uEndPoint, vCenter[0], 0);
+        NvU32 splitZ = loosePointsSort(uFirstPoint, uEndPoint, vCenter[2], 2);
+        NvU32 splitY0 = loosePointsSort(uFirstPoint, splitZ, vCenter[1], 1);
+        NvU32 splitY1 = loosePointsSort(splitZ, uEndPoint, vCenter[1], 1);
+        NvU32 splitX0 = loosePointsSort(uFirstPoint, splitY0, vCenter[0], 0);
+        NvU32 splitX1 = loosePointsSort(splitY0, splitZ, vCenter[0], 0);
+        NvU32 splitX2 = loosePointsSort(splitZ, splitY1, vCenter[0], 0);
+        NvU32 splitX3 = loosePointsSort(splitY1, uEndPoint, vCenter[0], 0);
 
         NvU32 uFirstChild = (NvU32)m_nodes.size();
         node.initAsParent(uFirstChild);
@@ -252,6 +279,74 @@ struct OcTree
         return true;
     }
 
-    Access& m_access;
-    std::vector<OcTreeNode<Access>> m_nodes;
+    void splitRecursive(OcBoxStack<T>& curStack)
+    {
+        NvU32 parentNodeIndex = curStack.getCurNodeIndex();
+        auto* pNode = &m_nodes[parentNodeIndex];
+        nvAssert(pNode->isLeaf());
+        if (pNode->getNPoints() <= 16) // no need to split further?
+        {
+            return;
+        }
+#if ASSERT_ONLY_CODE
+        NvU32 dbgNPoints1 = pNode->getNPoints(), dbgNPoints2 = 0;
+#endif
+        split(curStack);
+        NvU32 uFirstChild = m_nodes[parentNodeIndex].getFirstChild();
+        for (NvU32 uChild = 0; uChild < 8; ++uChild)
+        {
+#if ASSERT_ONLY_CODE
+            NvU32 dbgDepth = curStack.getCurDepth();
+            auto dbgBox = curStack.getBox(dbgDepth);
+#endif
+            NvU32 childNodeIndex = uFirstChild + uChild;
+            curStack.push(uChild, childNodeIndex);
+#if ASSERT_ONLY_CODE
+            nvAssert(curStack.getCurDepth() == dbgDepth + 1);
+            auto& node = m_nodes[childNodeIndex];
+            dbgNPoints2 += node.getNPoints();
+            if (curStack.getCurDepth() == 1)
+            {
+                for (NvU32 u = node.getFirstPoint(); u < node.getEndPoint(); ++u)
+                {
+                    nvAssert(curStack.getBox(curStack.getCurDepth()).includes(m_access.getPointPos(m_points[u])));
+                }
+            }
+#endif
+            splitRecursive(curStack);
+            NvU32 childIndex = curStack.pop();
+#if ASSERT_ONLY_CODE
+            // check that after we pop() we get the same box we had before push()
+            nvAssert(childIndex == uChild);
+            nvAssert(curStack.getCurDepth() == dbgDepth);
+            nvAssert(curStack.getBox(dbgDepth) == dbgBox);
+#endif
+        }
+        nvAssert(dbgNPoints1 == dbgNPoints2);
+    }
+
+    // returns index of first point for which points[u][uDim] >= fSplit
+    NvU32 loosePointsSort(NvU32 uBegin, NvU32 uEnd, T fSplit, NvU32 uDim)
+    {
+        for (; ; ++uBegin)
+        {
+            nvAssert(uBegin <= uEnd);
+            if (uBegin == uEnd)
+                return uEnd;
+            T f1 = m_access.getPointPos(m_points[uBegin])[uDim];
+            if (f1 < fSplit)
+                continue;
+            // search for element with which we can swap
+            for (--uEnd; ; --uEnd)
+            {
+                nvAssert(uBegin <= uEnd);
+                if (uBegin == uEnd)
+                    return uEnd;
+                T f2 = m_access.getPointPos(m_points[uEnd])[uDim];
+                if (f2 < fSplit)
+                    break;
+            }
+            nvSwap(m_points[uBegin], m_points[uEnd]);
+        }
+    }
 };
