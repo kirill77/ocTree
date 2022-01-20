@@ -107,8 +107,8 @@ struct OcTreeNode
         m_uFirstChild = ~0U;
         nvAssert(isLeaf());
     }
-    NvU32 getFirstPoint() const { return m_uFirstPoint; }
-    NvU32 getEndPoint() const { return m_uEndPoint; }
+    NvU32 getFirstTreePoint() const { return m_uFirstPoint; }
+    NvU32 getEndTreePoint() const { return m_uEndPoint; }
     NvU32 getNPoints() const { return m_uEndPoint - m_uFirstPoint; }
     NvU32 getFirstChild() const { nvAssert(!isLeaf()); return m_uFirstChild; }
 
@@ -238,6 +238,7 @@ struct OcTree
         // split oc-tree recursively to get small number of points per leaf
         splitRecursive(curStack);
     }
+    NvU32 getPointIndex(NvU32 uTreePoint) const { return m_points[uTreePoint]; }
 
     Access& m_access;
     std::vector<OcTreeNode<Access>> m_nodes;
@@ -252,8 +253,8 @@ private:
 
         const auto& bbox = stack.getCurBox();
         auto vCenter = bbox.computeCenter();
-        NvU32 uFirstPoint = node.getFirstPoint();
-        NvU32 uEndPoint = node.getEndPoint();
+        NvU32 uFirstPoint = node.getFirstTreePoint();
+        NvU32 uEndPoint = node.getEndTreePoint();
 
         NvU32 splitZ = loosePointsSort(uFirstPoint, uEndPoint, vCenter[2], 2);
         NvU32 splitY0 = loosePointsSort(uFirstPoint, splitZ, vCenter[1], 1);
@@ -307,7 +308,7 @@ private:
             dbgNPoints2 += node.getNPoints();
             if (curStack.getCurDepth() == 1)
             {
-                for (NvU32 u = node.getFirstPoint(); u < node.getEndPoint(); ++u)
+                for (NvU32 u = node.getFirstTreePoint(); u < node.getEndTreePoint(); ++u)
                 {
                     nvAssert(curStack.getBox(curStack.getCurDepth()).includes(m_access.getPointPos(m_points[u])));
                 }
